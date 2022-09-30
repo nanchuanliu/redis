@@ -34,12 +34,14 @@
 #include <sys/time.h>
 
 typedef struct aeApiState {
+    //kqueue文件描述符
     int kqfd;
+    //已触发的事件数组？
     struct kevent *events;
 
-    /* Events mask for merge read and write event.
-     * To reduce memory consumption, we use 2 bits to store the mask
-     * of an event, so that 1 byte will store the mask of 4 events. */
+    /* 合并读取和写入事件的事件掩码。
+     * 为了减少内存消耗，我们使用2位来存储事件掩码，
+     * 因此 1 个字节将存储 4 个事件的掩码。*/
     char *eventsMask; 
 } aeApiState;
 

@@ -67,7 +67,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
 
-    monotonicInit();    /* just in case the calling app didn't initialize */
+    monotonicInit();/* 以防调用应用未初始化*/
 
     if ((eventLoop = zmalloc(sizeof(*eventLoop))) == NULL) goto err;
     eventLoop->events = zmalloc(sizeof(aeFileEvent)*setsize);
@@ -82,8 +82,8 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->aftersleep = NULL;
     eventLoop->flags = 0;
     if (aeApiCreate(eventLoop) == -1) goto err;
-    /* Events with mask == AE_NONE are not set. So let's initialize the
-     * vector with it. */
+    /* 未设置掩码 == AE_NONE的事件。因此，让我们初始化
+     *矢量与它。*/
     for (i = 0; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
     return eventLoop;
