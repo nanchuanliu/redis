@@ -155,7 +155,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp) {
          * events, which would make it impossible to control the order of
          * reads and writes. So we store the event's mask we've got and merge
          * the same fd events later. */
-        for (j = 0; j < retval; j++) {
+            for (j = 0; j < retval; j++) {
             struct kevent *e = state->events+j;
             int fd = e->ident;
             int mask = 0; 

@@ -108,8 +108,8 @@ static void clientSetDefaultAuth(client *c) {
 }
 
 int authRequired(client *c) {
-    /* Check if the user is authenticated. This check is skipped in case
-     * the default user is flagged as "nopass" and is active. */
+    /* 检查用户是否已通过身份验证。
+     * 在默认用户被标记为“nopass”并处于活动状态，则跳过此验证*/
     int auth_required = (!(DefaultUser->flags & USER_FLAG_NOPASS) ||
                           (DefaultUser->flags & USER_FLAG_DISABLED)) &&
                         !c->authenticated;
@@ -119,15 +119,20 @@ int authRequired(client *c) {
 client *createClient(connection *conn) {
     client *c = zmalloc(sizeof(client));
 
-    /* passing NULL as conn it is possible to create a non connected client.
-     * This is useful since all the commands needs to be executed
-     * in the context of a client. When commands are executed in other
-     * contexts (for instance a Lua script) we need a non connected client. */
+    /* 将 NULL 作为 conn 传递，可以创建一个未连接的客户端。
+     * 这很有用，因为所有命令都需要在客户端上下文中执行。
+     * 当在其他上下文（例如Lua脚本）执行命令时，
+     * 我们需要一个未连接的客户端。*/
     if (conn) {
+        //配置socket为非阻塞
         connNonBlock(conn);
+        //不开启Nagle算法和SO_KEEPALIVE
         connEnableTcpNoDelay(conn);
         if (server.tcpkeepalive)
             connKeepAlive(conn,server.tcpkeepalive);
+        // 向 eventLoop 中注册了 readQueryFromClient
+        // readQueryFromClient 的作用就是从client中读取客户端的查询缓冲区内容。
+        // 绑定读事件到事件 loop （开始接收命令请求）
         connSetReadHandler(conn, readQueryFromClient);
         connSetPrivateData(conn, c);
     }
@@ -1119,11 +1124,10 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
         return;
     }
 
-    /* Limit the number of connections we take at the same time.
+    /* 限制我们同时连接的数量。
      *
-     * Admission control will happen before a client is created and connAccept()
-     * called, because we don't want to even start transport-level negotiation
-     * if rejected. */
+     * 准入控制将在创建客户端和 connAccept() 调用前进行
+     * 因为如果被拒绝，我们甚至不想开始传输级别的协商 */
     if (listLength(server.clients) + getClusterConnectionsCount()
         >= server.maxclients)
     {
@@ -1134,37 +1138,37 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip) {
         else
             err = "-ERR max number of clients reached\r\n";
 
-        /* That's a best effort error message, don't check write errors.
-         * Note that for TLS connections, no handshake was done yet so nothing
-         * is written and the connection will just drop. */
+        /* 这是一个尽力而为的错误消息，不要检查写入错误。
+         * 请注意，对于TLS连接，尚未进行握手，因此没有任何内容
+         * 已写入，连接将断开。*/
         if (connWrite(conn,err,strlen(err)) == -1) {
-            /* Nothing to do, Just to avoid the warning... */
+            /*没什么可做的，只是为了避免警告...*/
         }
         server.stat_rejected_conn++;
         connClose(conn);
         return;
     }
 
-    /* Create connection and client */
+    /* 创建连接和客户端*/
     if ((c = createClient(conn)) == NULL) {
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (conn: %s)",
             connGetLastError(conn),
             connGetInfo(conn, conninfo, sizeof(conninfo)));
-        connClose(conn); /* May be already closed, just ignore errors */
+        connClose(conn);/* 可能已关闭，只需忽略错误*/
         return;
     }
 
-    /* Last chance to keep flags */
+    /* 保留标志的最后机会*/
     c->flags |= flags;
 
-    /* Initiate accept.
+    /* 初始化accept。
      *
-     * Note that connAccept() is free to do two things here:
-     * 1. Call clientAcceptHandler() immediately;
-     * 2. Schedule a future call to clientAcceptHandler().
+     * 请注意，connAccept() 可以自由地在这里做两件事：
+     * 1.立即调用clientAcceptHandler（）;
+     * 2.安排对clientAcceptHandler()的future 调用。
      *
-     * Because of that, we must do nothing else afterwards.
+     * 正因为如此，我们以后必须不做其他事情。
      */
     if (connAccept(conn, clientAcceptHandler) == C_ERR) {
         char conninfo[100];
@@ -2048,35 +2052,32 @@ int processMultibulkBuffer(client *c) {
     return C_ERR;
 }
 
-/* Perform necessary tasks after a command was executed:
+/* 命令执行完后执行必要的任务：
  *
- * 1. The client is reset unless there are reasons to avoid doing it.
- * 2. In the case of master clients, the replication offset is updated.
- * 3. Propagate commands we got from our master to replicas down the line. */
+ * 1.除非有理由避免重置客户端，否则将重置客户端。
+ * 2.对于主客户端，将更新复制偏移。
+ * 3.将我们从主数据库获得的命令传播到副本。*/
 void commandProcessed(client *c) {
-    /* If client is blocked(including paused), just return avoid reset and replicate.
+    /* 如果客户端被阻塞（包括已暂停），只需返回以避免重置和复制。
      *
-     * 1. Don't reset the client structure for blocked clients, so that the reply
-     *    callback will still be able to access the client argv and argc fields.
-     *    The client will be reset in unblockClient().
-     * 2. Don't update replication offset or propagate commands to replicas,
-     *    since we have not applied the command. */
+     * 1.不要重置被阻塞客户端的客户端结构，以便回复
+     * 回调仍将能够访问客户端 argv 和 argc 字段。
+     * 客户端将在 unblockClient （） 中重置。
+     * 2.不要更新复制偏移或将命令传播到副本，
+     * 因为我们没有应用该命令。*/
     if (c->flags & CLIENT_BLOCKED) return;
 
     resetClient(c);
 
     long long prev_offset = c->reploff;
     if (c->flags & CLIENT_MASTER && !(c->flags & CLIENT_MULTI)) {
-        /* Update the applied replication offset of our master. */
+        /* 更新主服务器应用的复制偏移量。 */
         c->reploff = c->read_reploff - sdslen(c->querybuf) + c->qb_pos;
     }
 
-    /* If the client is a master we need to compute the difference
-     * between the applied offset before and after processing the buffer,
-     * to understand how much of the replication stream was actually
-     * applied to the master state: this quantity, and its corresponding
-     * part of the replication stream, will be propagated to the
-     * sub-replicas and to the replication backlog. */
+    /* 如果客户端是主节点，我们需要计算处理缓冲区之前和之后的偏移量之间的差值
+     * 来了解实际应用于主状态的复制流的多少：
+     * 此数量及其对应部分复制流，将被传播到子副本和复制积压工作。*/
     if (c->flags & CLIENT_MASTER) {
         long long applied = c->reploff - prev_offset;
         if (applied) {
@@ -2087,14 +2088,12 @@ void commandProcessed(client *c) {
     }
 }
 
-/* This function calls processCommand(), but also performs a few sub tasks
- * for the client that are useful in that context:
+/* 此函数调用 processCommand（），也为该上下文中有用的客户端执行一些子任务
  *
- * 1. It sets the current client to the client 'c'.
- * 2. calls commandProcessed() if the command was handled.
+ * 1.它将当前客户端设置为客户端“c”。
+ * 2.如果命令已处理，调用 commandProcessed 。
  *
- * The function returns C_ERR in case the client was freed as a side effect
- * of processing the command, otherwise C_OK is returned. */
+ * 以防客户端作为处理命令的副作用被释放，该函数返回C_ERR，否则返回C_OK。*/
 int processCommandAndResetClient(client *c) {
     int deadclient = 0;
     client *old_client = server.current_client;
@@ -2103,17 +2102,16 @@ int processCommandAndResetClient(client *c) {
         commandProcessed(c);
     }
     if (server.current_client == NULL) deadclient = 1;
+
     /*
-     * Restore the old client, this is needed because when a script
-     * times out, we will get into this code from processEventsWhileBlocked.
-     * Which will cause to set the server.current_client. If not restored
-     * we will return 1 to our caller which will falsely indicate the client
-     * is dead and will stop reading from its buffer.
+     * 恢复旧客户端，这是需要的，因为当脚本超时，我们将从 processEventsWhileBlocked 进入此代码。
+     * 这将导致设置server.current_client。
+     * 如果未恢复，我们将返回1给我们的调用者，这将错误地指示客户端已死，将停止从其缓冲区读取。
      */
     server.current_client = old_client;
-    /* performEvictions may flush slave output buffers. This may
-     * result in a slave, that may be the active client, to be
-     * freed. */
+
+    /* performEvictions 可能会刷新从输出缓冲区。
+     * 这可能导致从被释放（可能是活动客户端）。*/
     return deadclient ? C_ERR : C_OK;
 }
 
@@ -2131,34 +2129,30 @@ int processPendingCommandsAndResetClient(client *c) {
     return C_OK;
 }
 
-/* This function is called every time, in the client structure 'c', there is
- * more query buffer to process, because we read more data from the socket
- * or because a client was blocked and later reactivated, so there could be
- * pending query buffer, already representing a full command, to process. */
+/* 在客户端结构“c”中，每次调用此函数，都有更多的查询缓冲区需要处理，
+ * 因为我们从套接字读取更多的数据
+ * 或者因为客户端被阻塞并随后重新激活，所以可能存在
+ * 挂起的查询缓冲区，已表示要处理的完整命令。*/
 void processInputBuffer(client *c) {
-    /* Keep processing while there is something in the input buffer */
+    /* 在输入缓冲区中有某些内容时继续处理 */
     while(c->qb_pos < sdslen(c->querybuf)) {
-        /* Immediately abort if the client is in the middle of something. */
+        /* 如果客户端处于某些内容中间，则立即中止。*/
         if (c->flags & CLIENT_BLOCKED) break;
 
-        /* Don't process more buffers from clients that have already pending
-         * commands to execute in c->argv. */
+        /* 不要处理来自在 c->argv 中已有挂起命令待执行的客户端的更多缓冲数据 */
         if (c->flags & CLIENT_PENDING_COMMAND) break;
 
-        /* Don't process input from the master while there is a busy script
-         * condition on the slave. We want just to accumulate the replication
-         * stream (instead of replying -BUSY like we do with other clients) and
-         * later resume the processing. */
+        /* 当从服务器有脚本在忙时。不处理来自主服务器的输入。
+         * 我们只想积累复制流（而不是像我们对待其他客户那样回复-忙）和 稍后恢复处理。*/
         if (server.lua_timedout && c->flags & CLIENT_MASTER) break;
 
-        /* CLIENT_CLOSE_AFTER_REPLY closes the connection once the reply is
-         * written to the client. Make sure to not let the reply grow after
-         * this flag has been set (i.e. don't process more commands).
+        /* CLIENT_CLOSE_AFTER_REPLY 回复写客户端后关闭连接。
+         * 确保此标志已设置（即不处理更多命令），不要让回复再增长。
          *
-         * The same applies for clients we want to terminate ASAP. */
+         * 这同样适用于我们希望尽快终止的客户端。*/
         if (c->flags & (CLIENT_CLOSE_AFTER_REPLY|CLIENT_CLOSE_ASAP)) break;
 
-        /* Determine request type when unknown. */
+        /* 确定未知时的请求类型。telnent发送的命令和redis-cli发送的命令请求格式不同 */
         if (!c->reqtype) {
             if (c->querybuf[c->qb_pos] == '*') {
                 c->reqtype = PROTO_REQ_MULTIBULK;
@@ -2167,11 +2161,13 @@ void processInputBuffer(client *c) {
             }
         }
 
+        /**
+         * 从缓存区解析命令
+         */
         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) break;
-            /* If the Gopher mode and we got zero or one argument, process
-             * the request in Gopher mode. To avoid data race, Redis won't
-             * support Gopher if enable io threads to read queries. */
+            /* 如果 Gopher 模式且我们得到零个或一个参数，则处理Gopher 模式下的请求。
+             * 为了避免数据竞争，如果启用 io 线程读取查询，则Redis不会支持 Gopher 。*/
             if (server.gopher_enabled && !server.io_threads_do_reads &&
                 ((c->argc == 1 && ((char*)(c->argv[0]->ptr))[0] == '/') ||
                   c->argc == 0))
@@ -2187,29 +2183,28 @@ void processInputBuffer(client *c) {
             serverPanic("Unknown request type");
         }
 
-        /* Multibulk processing could see a <= 0 length. */
+        /* 参数个数为0时重置client，可以接受下一个命令 */
         if (c->argc == 0) {
             resetClient(c);
         } else {
-            /* If we are in the context of an I/O thread, we can't really
-             * execute the command here. All we can do is to flag the client
-             * as one that needs to process the command. */
+            /* 如果我们处于 I/O 线程的上下文中，则无法真正
+             * 在此处执行命令。我们所能做的就是标记客户端
+             * 作为需要处理的命令。*/            
             if (c->flags & CLIENT_PENDING_READ) {
                 c->flags |= CLIENT_PENDING_COMMAND;
                 break;
             }
 
-            /* We are finally ready to execute the command. */
+            /* 执行命令 */
             if (processCommandAndResetClient(c) == C_ERR) {
-                /* If the client is no longer valid, we avoid exiting this
-                 * loop and trimming the client buffer later. So we return
-                 * ASAP in that case. */
+                /* 如果客户端不再有效，我们将避免退出循环并修剪客户端缓冲区。
+                 * 所以在这种情况下，我们尽快返回。*/
                 return;
             }
         }
     }
 
-    /* Trim to pos */
+    /* 修剪到位置*/
     if (c->qb_pos) {
         sdsrange(c->querybuf,c->qb_pos,-1);
         c->qb_pos = 0;
@@ -2221,35 +2216,36 @@ void readQueryFromClient(connection *conn) {
     int nread, readlen;
     size_t qblen;
 
-    /* Check if we want to read from the client later when exiting from
-     * the event loop. This is the case if threaded I/O is enabled. */
+    /* 检查稍后从事件循环退出时是否需要读取客户端数据。
+     * 如果启用了线程化 I/O，则会出现这种情况。*/
     if (postponeClientRead(c)) return;
 
-    /* Update total number of reads on server */
+    /* 更新服务器上的读取总数*/
     atomicIncr(server.stat_total_reads_processed, 1);
 
     readlen = PROTO_IOBUF_LEN;
-    /* If this is a multi bulk request, and we are processing a bulk reply
-     * that is large enough, try to maximize the probability that the query
-     * buffer contains exactly the SDS string representing the object, even
-     * at the risk of requiring more read(2) calls. This way the function
-     * processMultiBulkBuffer() can avoid copying buffers to create the
-     * Redis Object representing the argument. */
+    
+    /* 如果这是一个多批量请求，并且我们正在处理的批量回复足够大，
+     * 尽量最大化查询缓冲区包含表示对象的 SDS 字符串的概率，
+     * 甚至需要更多读调用（2）的风险。
+     * 这种方式下函数processMultiBulkBuffer（） 可以避免复制缓冲区来创建表示参数的 Redis 对象。*/
     if (c->reqtype == PROTO_REQ_MULTIBULK && c->multibulklen && c->bulklen != -1
         && c->bulklen >= PROTO_MBULK_BIG_ARG)
     {
         ssize_t remaining = (size_t)(c->bulklen+2)-sdslen(c->querybuf);
 
-        /* Note that the 'remaining' variable may be zero in some edge case,
-         * for example once we resume a blocked client after CLIENT PAUSE. */
+        /* 请注意，在某些边缘情况下，“剩余”变量可能为零，
+         * 例如，一旦我们在客户端暂停后恢复被阻止的客户端。*/
         if (remaining > 0 && remaining < readlen) readlen = remaining;
     }
 
     qblen = sdslen(c->querybuf);
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
+    //从 fd 对应的socket中读取到 client 中的 querybuf 输入缓冲区 
     nread = connRead(c->conn, c->querybuf+qblen, readlen);
     if (nread == -1) {
+        //出错释放 connection
         if (connGetState(conn) == CONN_STATE_CONNECTED) {
             return;
         } else {
@@ -2258,21 +2254,22 @@ void readQueryFromClient(connection *conn) {
             return;
         }
     } else if (nread == 0) {
+        // 客户端主动关闭 connection
         serverLog(LL_VERBOSE, "Client closed connection");
         freeClientAsync(c);
         return;
     } else if (c->flags & CLIENT_MASTER) {
-        /* Append the query buffer to the pending (not applied) buffer
-         * of the master. We'll use this buffer later in order to have a
-         * copy of the string applied by the last command executed. */
+        /* 当这个client代表主从的master节点时，将查询缓冲区追加到挂起（未应用）缓冲区
+         * 我们稍后将使用此缓冲区，以便获得上次执行的命令所应用的字符串的副本。*/
         c->pending_querybuf = sdscatlen(c->pending_querybuf,
                                         c->querybuf+qblen,nread);
     }
-
+    // 增加已经读取的字节数
     sdsIncrLen(c->querybuf,nread);
     c->lastinteraction = server.unixtime;
     if (c->flags & CLIENT_MASTER) c->read_reploff += nread;
     atomicIncr(server.stat_net_input_bytes, nread);
+    //如果大于系统配置的最大客户端缓存区大小
     if (sdslen(c->querybuf) > server.client_max_querybuf_len) {
         sds ci = catClientInfoString(sdsempty(),c), bytes = sdsempty();
 
@@ -2284,8 +2281,8 @@ void readQueryFromClient(connection *conn) {
         return;
     }
 
-    /* There is more data in the client input buffer, continue parsing it
-     * in case to check if there is a full command to execute. */
+    /* 客户端输入缓冲区中有更多数据，请继续解析
+     * 为了检查是否有要执行的完整命令。*/
      processInputBuffer(c);
 }
 

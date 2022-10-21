@@ -1197,7 +1197,7 @@ struct redisServer {
     int always_show_logo;       /* Show logo even for non-stdout logging. */
     int in_eval;                /* Are we inside EVAL? */
     int in_exec;                /* Are we inside EXEC? */
-    int propagate_in_transaction;  /* Make sure we don't propagate nested MULTI/EXEC */
+    int propagate_in_transaction;  /* 确保我们不会传播嵌套事务 */
     char *ignore_warnings;      /* Config: warnings that should be ignored. */
     int client_pause_in_transaction; /* Was a client pause executed during this Exec? */
     /* Modules */
@@ -1511,7 +1511,7 @@ struct redisServer {
     list *unblocked_clients; /* list of clients to unblock before next loop */
     list *ready_keys;        /* List of readyList structures for BLPOP & co */
     /* Client side caching. */
-    unsigned int tracking_clients;  /* # of clients with tracking enabled.*/
+    unsigned int tracking_clients; /* 启用了跟踪的客户端数。*/
     size_t tracking_table_max_keys; /* Max number of keys in tracking table. */
     list *tracking_pending_keys; /* tracking invalidation keys pending to flush */
     /* Sort parameters - qsort_r() is only available under BSD so we
@@ -1585,8 +1585,7 @@ struct redisServer {
     int lua_replicate_commands; /* True if we are doing single commands repl. */
     int lua_multi_emitted;/* True if we already propagated MULTI. */
     int lua_repl;         /* Script replication flags for redis.set_repl(). */
-    int lua_timedout;     /* True if we reached the time limit for script
-                             execution. */
+    int lua_timedout;     /* 达到脚本执行的时间限制，则为 true */
     int lua_kill;         /* Kill the script if true. */
     int lua_always_replicate_commands; /* Default replication type. */
     int lua_oom;          /* OOM detected when script start? */

@@ -75,7 +75,7 @@ typedef struct aeFileEvent {
 /*时间事件结构*/
 typedef struct aeTimeEvent {
     long long id;                          /* 时间事件标识符。通过字段eventLoop->timeEventNextId实现 */
-    monotime when;                         /* 事件事件触发的时间 */
+    monotime when;                         /* 事件触发的时间 */
     aeTimeProc *timeProc;                  /* 函数指针，指向时间事件处理函数 */
     aeEventFinalizerProc *finalizerProc;   /* 函数指针，删除时间事件节点之前会调用此函数 */
     void *clientData;                      /* 指向对应的客户端对象 */
