@@ -138,21 +138,19 @@ robj *tryCreateStringObject(const char *ptr, size_t len) {
         return tryCreateRawStringObject(ptr,len);
 }
 
-/* Create a string object from a long long value. When possible returns a
- * shared integer object, or at least an integer encoded one.
+/* 从long long型值创建字符串对象。
+ * 如果可能，返回共享整数对象，或至少一个整型编码对象。
  *
- * If valueobj is non zero, the function avoids returning a shared
- * integer, because the object is going to be used as value in the Redis key
- * space (for instance when the INCR command is used), so we want LFU/LRU
- * values specific for each key. */
+ * 如果 valueobj 不为零，则该函数将避免返回共享整数，
+ * 因为该对象将用作 Redis 键空间中的值（例如，当使用 INCR 命令时），
+ * 因此我们想要 LFU/LRU 特定于每个键的值。*/
 robj *createStringObjectFromLongLongWithOptions(long long value, int valueobj) {
     robj *o;
 
     if (server.maxmemory == 0 ||
         !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS))
     {
-        /* If the maxmemory policy permits, we can still return shared integers
-         * even if valueobj is true. */
+        /* 如果最大内存策略允许，我们仍然可以返回共享整数，尽管valueobj为true。*/
         valueobj = 0;
     }
 
@@ -422,10 +420,10 @@ int isObjectRepresentableAsLongLong(robj *o, long long *llval) {
     }
 }
 
-/* Optimize the SDS string inside the string object to require little space,
- * in case there is more than 10% of free space at the end of the SDS
- * string. This happens because SDS strings tend to overallocate to avoid
- * wasting too much time in allocations when appending to the string. */
+/* 优化字符串对象内的 SDS 字符串以占用很少的空间，
+ * 如果 SDS 字符串结束时有超过 10% 的可用空间。
+ * 发生这种情况是因为SDS字符串倾向于过度分配以避免
+ * 在附加到字符串时浪费太多时间在分配上。*/
 void trimStringObjectIfNeeded(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW &&
         sdsavail(o->ptr) > sdslen(o->ptr)/10)
@@ -434,37 +432,34 @@ void trimStringObjectIfNeeded(robj *o) {
     }
 }
 
-/* Try to encode a string object in order to save space */
+/*尝试对字符串对象进行编码以节省空间*/
 robj *tryObjectEncoding(robj *o) {
     long value;
     sds s = o->ptr;
     size_t len;
 
-    /* Make sure this is a string object, the only type we encode
-     * in this function. Other types use encoded memory efficient
-     * representations but are handled by the commands implementing
-     * the type. */
+    /* 确保这是一个字符串对象，是我们在此函数中编码的唯一类型。*/
     serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
 
-    /* We try some specialized encoding only for objects that are
-     * RAW or EMBSTR encoded, in other words objects that are still
-     * in represented by an actually array of chars. */
+    /* 判断o的encoding是否为sds类型，只有sds类型的数据才可以进一步优化。*/
     if (!sdsEncodedObject(o)) return o;
 
-    /* It's not safe to encode shared objects: shared objects can be shared
-     * everywhere in the "object space" of Redis and may end in places where
-     * they are not handled. We handle them only as values in the keyspace. */
+    /* 对共享对象进行编码不安全：共享对象可以在Redis“对象空间”的所有地方共享。
+     * 如果对象的引用计数大于1，表示此对象在多处被引用。
+     * 在tryObjectEncoding函数结束时可能会修改o的值，
+     * 所以贸然继续进行可能会造成其他影响，
+     * 所以在refcount大于1的情况下，结束函数的运行，将o直接返回。*/
      if (o->refcount > 1) return o;
 
-    /* Check if we can represent this string as a long integer.
-     * Note that we are sure that a string larger than 20 chars is not
-     * representable as a 32 nor 64 bit integer. */
+    /* 检查我们是否可以将此字符串表示为长整型。
+     * 请注意，我们确定大于20个字符的字符串不可表示为 32 位或 64 位整数。*/
     len = sdslen(s);
     if (len <= 20 && string2l(s,len,&value)) {
-        /* This object is encodable as a long. Try to use a shared object.
-         * Note that we avoid using shared integers when maxmemory is used
-         * because every object needs to have a private LRU field for the LRU
-         * algorithm to work well. */
+        /* 此对象可编码为长整型。尝试使用共享对象。
+         * 请注意，当使用 maxmemory 时，我们避免使用共享整数,
+         * 因为每个对象都需要有一个专用的 LRU 字段，以确保 LRU 算法正常工作。
+         * 如果Redis的配置不要求运行LRU或LFU替换算法，
+         * 并且转换后的value值小于OBJ_SHARED_INTEGERS，那么会返回共享数字对象。 */
         if ((server.maxmemory == 0 ||
             !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) &&
             value >= 0 &&
@@ -486,10 +481,10 @@ robj *tryObjectEncoding(robj *o) {
         }
     }
 
-    /* If the string is small and is still RAW encoded,
-     * try the EMBSTR encoding which is more efficient.
-     * In this representation the object and the SDS string are allocated
-     * in the same chunk of memory to save space and cache misses. */
+    /* 如果字符串很小并且仍采用 RAW 编码，
+     * 尝试更有效的 EMBSTR 编码。
+     * 在此表示形式中，对象和 SDS 字符串
+     * 分配在同一个内存块中，以节省空间和缓存未命中。*/
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT) {
         robj *emb;
 
@@ -499,15 +494,13 @@ robj *tryObjectEncoding(robj *o) {
         return emb;
     }
 
-    /* We can't encode the object...
+    /* 我们无法对对象进行编码...
+     *   
+     * 做最后一次尝试，优化字符串对象里面的 SDS 字符串来节省内存空间，
+     * 如果 SDS 字符串末尾可用空间在 10% 以上。
      *
-     * Do the last try, and at least optimize the SDS string inside
-     * the string object to require little space, in case there
-     * is more than 10% of free space at the end of the SDS string.
-     *
-     * We do that only for relatively large strings as this branch
-     * is only entered if the length of the string is greater than
-     * OBJ_ENCODING_EMBSTR_SIZE_LIMIT. */
+     * 我们只对相对较大的字符串执行此操作，
+     * 仅当字符串的长度大于OBJ_ENCODING_EMBSTR_SIZE_LIMIT。*/    
     trimStringObjectIfNeeded(o);
 
     /* Return the original object. */

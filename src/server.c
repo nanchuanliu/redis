@@ -3815,7 +3815,8 @@ void call(client *c, int flags) {
         real_cmd->calls++;
     }
 
-    /* 将命令传播到 AOF 和复制链接*/
+    /* 将命令传播到 AOF 和复制链接
+     * 命令传播就是将命令写入 repl-backlog-buffer 缓冲中，并发送给各个从服务器中。 */
     if (flags & CMD_CALL_PROPAGATE &&
         (c->flags & CLIENT_PREVENT_PROP) != CLIENT_PREVENT_PROP)
     {

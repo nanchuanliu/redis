@@ -75,11 +75,14 @@ static int checkStringLength(client *c, long long size) {
 void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire, int unit, robj *ok_reply, robj *abort_reply) {
     long long milliseconds = 0, when = 0; /* initialized to avoid any harmness warning */
 
+    /**
+     * 设置了过期时间；expire是robj类型，获取整数值
+     */
     if (expire) {
         if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != C_OK)
             return;
         if (milliseconds <= 0 || (unit == UNIT_SECONDS && milliseconds > LLONG_MAX / 1000)) {
-            /* Negative value provided or multiplication is gonna overflow. */
+            /* 值非法 */
             addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
             return;
         }
@@ -88,12 +91,16 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
         if ((flags & OBJ_PX) || (flags & OBJ_EX))
             when += mstime();
         if (when <= 0) {
-            /* Overflow detected. */
+            /* 检测到溢出。*/
             addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
             return;
         }
     }
 
+    /**
+     * NX，key存在时直接返回；XX，key不存在时直接返回
+     * lookupKeyWrite 是在对应的数据库中寻找键值是否存在
+     */
     if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
         (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
     {
@@ -105,6 +112,9 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
         if (getGenericCommand(c) == C_ERR) return;
     }
 
+    /**
+     * 添加到数据字典
+     */
     genericSetKey(c,c->db,key, val,flags & OBJ_KEEPTTL,1);
     server.dirty++;
     notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id);
@@ -126,6 +136,10 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
         rewriteClientCommandVector(c,5,shared.set,key,val,exp,millisecondObj);
         decrRefCount(millisecondObj);
     }
+
+    /**
+     * 返回值 
+     */
     if (!(flags & OBJ_SET_GET)) {
         addReply(c, ok_reply ? ok_reply : shared.ok);
     }
@@ -259,10 +273,12 @@ void setCommand(client *c) {
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
 
+    /* 判断set命令是否携带了nx、xx、ex或者px等可选参数 */
     if (parseExtendedStringArgumentsOrReply(c,&flags,&unit,&expire,COMMAND_SET) != C_OK) {
         return;
     }
 
+    /*尝试对字符串对象进行编码以节省空间*/
     c->argv[2] = tryObjectEncoding(c->argv[2]);
     setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL);
 }

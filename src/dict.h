@@ -47,15 +47,18 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+/*
+ * 整体占用24字节
+ */
 typedef struct dictEntry {
-    void *key;
+    void *key;                  /* 存储键 */     
     union {
-        void *val;
+        void *val;              /* db.dict中的val */  
         uint64_t u64;
-        int64_t s64;
+        int64_t s64;            /* db.expires中存储过期时间 */ 
         double d;
-    } v;
-    struct dictEntry *next;
+    } v;                        /* 值，是个联合体 */   
+    struct dictEntry *next;     /* 当Hash冲突时，指向冲突的元素，通过头插法，形成单链表 */    
 } dictEntry;
 
 typedef struct dictType {
@@ -68,21 +71,22 @@ typedef struct dictType {
     int (*expandAllowed)(size_t moreMem, double usedRatio);
 } dictType;
 
-/* This is our hash table structure. Every dictionary has two of this as we
- * implement incremental rehashing, for the old to the new table. */
+
+/* 这是我们的哈希表结构。
+ * 每个字典都有两个，因为我们实现增量rehashing，将旧表换新表。*/
 typedef struct dictht {
-    dictEntry **table;
-    unsigned long size;
-    unsigned long sizemask;
-    unsigned long used;
+    dictEntry **table;      /* 指针数组，用于存储键值对 */
+    unsigned long size;     /* table数组的大小 */
+    unsigned long sizemask; /* 掩码 = size -1 */  
+    unsigned long used;     /* table数组已存元素个数，包含next单链表的数据 */
 } dictht;
 
 typedef struct dict {
-    dictType *type;
-    void *privdata;
-    dictht ht[2];
-    long rehashidx; /* rehashing not in progress if rehashidx == -1 */
-    int16_t pauserehash; /* If >0 rehashing is paused (<0 indicates coding error) */
+    dictType *type;     /* 该字典对应的特定操作函数 */
+    void *privdata;     /* 该字典依赖的数据，私有数据，配合type字段指向的函数一起使用 */     
+    dictht ht[2];       /* Hash表，键值对存储在此。一般情况下只会使用ht[0]，只有当该字典扩容、缩容需要进行rehash时，才会用到ht[1] */  
+    long rehashidx;     /* rehash标识。默认值为-1，代表没进行rehash操作；不为-1时，代表正进行rehash操作，存储的值表示Hash表ht[0]的rehash操作进行到了哪个索引值，并记录该元素的数组下标值 */
+    int16_t pauserehash; /* 如果>0 rehashing已暂停（<0 表示编码错误）*/
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call

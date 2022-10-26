@@ -674,10 +674,10 @@ typedef struct RedisModuleDigest {
 typedef struct redisObject {
     unsigned type:4;
     unsigned encoding:4;
-    unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
-                            * LFU data (least significant 8 bits frequency
-                            * and most significant 16 bits access time). */
-    int refcount;
+    unsigned lru:LRU_BITS;/* 缓存淘汰使用
+                           * LRU 时间（相对于全局lru_clock）或
+                           * LFU 数据（最低有效 8 位频率和最重要的16位访问时间）。*/
+    int refcount;          /* 引用计数 */
     void *ptr;
 } robj;
 
@@ -706,19 +706,19 @@ typedef struct clientReplyBlock {
     char buf[];
 } clientReplyBlock;
 
-/* Redis database representation. There are multiple databases identified
- * by integers from 0 (the default database) up to the max configured
- * database. The database number is the 'id' field in the structure. */
+/* Redis 数据库表示形式。
+ * 按从 0（默认数据库）到配置的最大值的整数来识别多个数据库。
+ * 数据库编号是结构中的“id”字段。*/
 typedef struct redisDb {
-    dict *dict;                 /* The keyspace for this DB */
-    dict *expires;              /* Timeout of keys with a timeout set */
-    dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP)*/
-    dict *ready_keys;           /* Blocked keys that received a PUSH */
-    dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
-    int id;                     /* Database ID */
-    long long avg_ttl;          /* Average TTL, just for stats */
-    unsigned long expires_cursor; /* Cursor of the active expire cycle. */
-    list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
+    dict *dict;                 /* 键空间散列表，存放所有键值对 */
+    dict *expires;              /* 过期时间散列表，存放键的过期时间，注意dict和expires中的键都指向同一个键的sds */
+    dict *blocking_keys;        /* 处于阻塞状态的键和对应的client (BLPOP)*/
+    dict *ready_keys;           /* 解除阻塞状态的键和对应的client */
+    dict *watched_keys;         /* 执行事务的key */
+    int id;                     /* 数据库 ID */
+    long long avg_ttl;          /* 平均生存时间，用于统计 */
+    unsigned long expires_cursor; /* 活动过期周期的游标。 */
+    list *defrag_later;         /* 尝试逐个进行碎片整理的key列表。 */
 } redisDb;
 
 /* Declare database backup that include redis main DBs and slots to keys map.

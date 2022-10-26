@@ -235,57 +235,53 @@ void clientInstallWriteHandler(client *c) {
     }
 }
 
-/* This function is called every time we are going to transmit new data
- * to the client. The behavior is the following:
+/* 每次我们要传输新数据给客户端时都会调用此函数
+ * 行为如下：
  *
- * If the client should receive new data (normal clients will) the function
- * returns C_OK, and make sure to install the write handler in our event
- * loop so that when the socket is writable new data gets written.
+ * 如果客户端应该接收到新数据（普通客户端会）函数返回C_OK，
+ * 并确保在我们的事件循环中安装写入处理程序，以便在套接字可写时写入新数据。
  *
- * If the client should not receive new data, because it is a fake client
- * (used to load AOF in memory), a master or because the setup of the write
- * handler failed, the function returns C_ERR.
+ * 如果客户端不应该收到新数据，因为它是一个假客户端
+ * （用于加载 AOF 在内存中），主节点或因为设置的写入
+ * 处理程序失败，函数返回C_ERR。
  *
- * The function may return C_OK without actually installing the write
- * event handler in the following cases:
+ * 在以下情况下，该函数可能会在未实际安装写入事件处理程序的情况下返回C_OK：
  *
- * 1) The event handler should already be installed since the output buffer
- *    already contains something.
- * 2) The client is a slave but not yet online, so we want to just accumulate
- *    writes in the buffer but not actually sending them yet.
+ * 1）由于输出缓冲区已包含某些内容，事件处理程序已安装。
+ * 2）客户端是从节点，但不在线，所以我们只想积累写入缓冲区，但尚未实际发送它们。
  *
- * Typically gets called every time a reply is built, before adding more
- * data to the clients output buffers. If the function returns C_ERR no
- * data should be appended to the output buffers. */
+ * 通常在每次构建回复时调用，然后再添加更多回复数据到客户端输出缓冲区。
+ * 如果函数返回 C_ERR，则没有数据应追加到输出缓冲区。*/
 int prepareClientToWrite(client *c) {
-    /* If it's the Lua client we always return ok without installing any
-     * handler since there is no socket at all. */
+
+    /* 如果是 lua client 则直接OK，因为没 socket 不需要安装处理器. */
     if (c->flags & (CLIENT_LUA|CLIENT_MODULE)) return C_OK;
 
-    /* If CLIENT_CLOSE_ASAP flag is set, we need not write anything. */
+    /* 客户端发送立即关闭客户端命令，不需要写任何数据。 */
     if (c->flags & CLIENT_CLOSE_ASAP) return C_ERR;
 
-    /* CLIENT REPLY OFF / SKIP handling: don't send replies. */
+    /* 客户端发送 REPLY OFF 或者 SKIP 命令，不需要发送返回值 */
     if (c->flags & (CLIENT_REPLY_OFF|CLIENT_REPLY_SKIP)) return C_ERR;
 
-    /* Masters don't receive replies, unless CLIENT_MASTER_FORCE_REPLY flag
-     * is set. */
+    /* master 作为client 向 slave 发送命令，不需要接收返回值。
+     * 除非发送了 CLIENT_MASTER_FORCE_REPLY 指令。 */
     if ((c->flags & CLIENT_MASTER) &&
         !(c->flags & CLIENT_MASTER_FORCE_REPLY)) return C_ERR;
 
-    if (!c->conn) return C_ERR; /* Fake client for AOF loading. */
+    /* AOF 加载时的假客户端，不需要返回值 */
+    if (!c->conn) return C_ERR; 
 
-    /* Schedule the client to write the output buffers to the socket, unless
-     * it should already be setup to do so (it has already pending data).
-     *
-     * If CLIENT_PENDING_READ is set, we're in an IO thread and should
-     * not install a write handler. Instead, it will be done by
-     * handleClientsWithPendingReadsUsingThreads() upon return.
-     */
+     /* 安排客户端将输出缓冲区写入套接字，
+      * 除非它已经这样做了（它已经有待处理的数据）。
+      *
+      * 如果设置了CLIENT_PENDING_READ，则我们处于 IO 线程中，
+      * 不应该安装写入处理程序。
+      * 相反，它在返回时将通过 handleClientsWithPendingReadsUsingThreads（）完成。 */
     if (!clientHasPendingReplies(c) && !(c->flags & CLIENT_PENDING_READ))
+            // 将client加入到等待写入返回值队列中，下次事件周期会进行返回值写入。
             clientInstallWriteHandler(c);
 
-    /* Authorize the caller to queue in the output buffer of this client. */
+    /* 授权调用方在此客户端的输出缓存区中排队 */
     return C_OK;
 }
 
@@ -357,17 +353,17 @@ void _addReplyProtoToList(client *c, const char *s, size_t len) {
  * The following functions are the ones that commands implementations will call.
  * -------------------------------------------------------------------------- */
 
-/* Add the object 'obj' string representation to the client output buffer. */
+/* 将对象“obj”字符串表示形式添加到客户端输出缓冲区。*/
 void addReply(client *c, robj *obj) {
     if (prepareClientToWrite(c) != C_OK) return;
 
     if (sdsEncodedObject(obj)) {
+        // 需要将响应内容添加到output buffer中。总体思路是，先尝试向固定buffer添加，添加失败的话，再尝试添加到响应链表
         if (_addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != C_OK)
             _addReplyProtoToList(c,obj->ptr,sdslen(obj->ptr));
     } else if (obj->encoding == OBJ_ENCODING_INT) {
-        /* For integer encoded strings we just convert it into a string
-         * using our optimized function, and attach the resulting string
-         * to the output buffer. */
+        /* 对于整数编码字符串，我们只需使用优化函数将其转换为字符串，
+         * 并将生成的字符串附加到输出缓冲区。*/
         char buf[32];
         size_t len = ll2string(buf,sizeof(buf),(long)obj->ptr);
         if (_addReplyToBuffer(c,buf,len) != C_OK)
@@ -1557,36 +1553,39 @@ client *lookupClientByID(uint64_t id) {
     return (c == raxNotFound) ? NULL : c;
 }
 
-/* Write data in output buffers to client. Return C_OK if the client
- * is still valid after the call, C_ERR if it was freed because of some
- * error.  If handler_installed is set, it will attempt to clear the
- * write event.
+
+/* 将输出缓冲区中的数据写入客户端。
+ * 如果客户端在调用后仍然有效，则返回 C_OK ，
+ * 如果它因为错误被释放，则返回 C_ERR。
+ * 如果设置了 handler_installed ，它将尝试清除写事件。
  *
- * This function is called by threads, but always with handler_installed
- * set to 0. So when handler_installed is set to 0 the function must be
- * thread safe. */
+ * 此函数由线程调用，但总是使用 handler_installed 设置为0。
+ * 因此，当handler_installed设置为0时，该函数必须为线程安全的。*/
 int writeToClient(client *c, int handler_installed) {
-    /* Update total number of writes on server */
+    /*更新服务器上的写总数*/
     atomicIncr(server.stat_total_writes_processed, 1);
 
     ssize_t nwritten = 0, totwritten = 0;
     size_t objlen;
     clientReplyBlock *o;
-
+    // 仍然有数据未写入
     while(clientHasPendingReplies(c)) {
+        // 如果缓冲区有数据
         if (c->bufpos > 0) {
+            // 写入到 fd 代表的 socket 中
             nwritten = connWrite(c->conn,c->buf+c->sentlen,c->bufpos-c->sentlen);
             if (nwritten <= 0) break;
             c->sentlen += nwritten;
+            // 统计本次一共输出了多少子节
             totwritten += nwritten;
 
-            /* If the buffer was sent, set bufpos to zero to continue with
-             * the remainder of the reply. */
+            /* buffer中的数据已经发送，则重置标志位，让响应的后续数据写入buffer */
             if ((int)c->sentlen == c->bufpos) {
                 c->bufpos = 0;
                 c->sentlen = 0;
             }
         } else {
+            // 缓冲区没有数据，从reply队列中拿
             o = listNodeValue(listFirst(c->reply));
             objlen = o->used;
 
@@ -1596,34 +1595,33 @@ int writeToClient(client *c, int handler_installed) {
                 continue;
             }
 
+            // 将队列中的数据写入 socket
             nwritten = connWrite(c->conn, o->buf + c->sentlen, objlen - c->sentlen);
             if (nwritten <= 0) break;
             c->sentlen += nwritten;
             totwritten += nwritten;
 
-            /* If we fully sent the object on head go to the next one */
+            // 如果写入成功，则删除队列
             if (c->sentlen == objlen) {
                 c->reply_bytes -= o->size;
                 listDelNode(c->reply,listFirst(c->reply));
                 c->sentlen = 0;
-                /* If there are no longer objects in the list, we expect
-                 * the count of reply bytes to be exactly zero. */
+                /* 如果列表中不再有对象，我们期望回复字节数为零。*/
                 if (listLength(c->reply) == 0)
                     serverAssert(c->reply_bytes == 0);
             }
         }
-        /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
-         * bytes, in a single threaded server it's a good idea to serve
-         * other clients as well, even if a very large request comes from
-         * super fast link that is always able to accept data (in real world
-         * scenario think about 'KEYS *' against the loopback interface).
+
+        /* 注意，我们避免发送超过 NET_MAX_WRITES_PER_EVENT 字节的内容，
+         * 字节，在单线程服务器上对于服务其他客户端是个不错的主意。
+         * 即使一个来自超级快速链接的非常大的请求，也总是能够接收数据
+         * (在现实世界场景中考虑'KEYS *'针对环回接口)。
          *
-         * However if we are over the maxmemory limit we ignore that and
-         * just deliver as much data as it is possible to deliver.
-         *
-         * Moreover, we also send as much as possible if the client is
-         * a slave or a monitor (otherwise, on high-speed traffic, the
-         * replication/output buffer will grow indefinitely) */
+         * 但是，如果我们超过了maxmemory限制，
+         * 我们会忽略它并尽可能多地提供数据。
+         * 
+         * 此外，如果客户是从节点或监视器，我们也尽可能多的发送。
+         * (否则，在高速通信中，复制/输出缓冲区将无限增长)*/
         if (totwritten > NET_MAX_WRITES_PER_EVENT &&
             (server.maxmemory == 0 ||
              zmalloc_used_memory() < server.maxmemory) &&
@@ -1639,21 +1637,21 @@ int writeToClient(client *c, int handler_installed) {
         }
     }
     if (totwritten > 0) {
-        /* For clients representing masters we don't count sending data
-         * as an interaction, since we always send REPLCONF ACK commands
-         * that take some time to just fill the socket output buffer.
-         * We just rely on data / pings received for timeout detection. */
+        /* 对于代表 master 的客户端，我们不计算作为交互发送的数据，
+         * 因为我们总是发送 REPLCONF ACK命令，
+         * 这需要一些时间来填充套接字输出缓冲区。
+         * 我们只是依靠接收到的数据 / ping进行超时检测。*/
         if (!(c->flags & CLIENT_MASTER)) c->lastinteraction = server.unixtime;
     }
     if (!clientHasPendingReplies(c)) {
         c->sentlen = 0;
-        /* Note that writeToClient() is called in a threaded way, but
-         * adDeleteFileEvent() is not thread safe: however writeToClient()
-         * is always called with handler_installed set to 0 from threads
-         * so we are fine. */
+
+        /* 注意 writeToClient() 是以线程的方式调用的，
+         * 但是 adDeleteFileEvent()不是线程安全的:
+         * 然而 writeToClient() 总是在线程的 handler_installed设置为0时调用，所以没什么问题。*/
         if (handler_installed) connSetWriteHandler(c->conn, NULL);
 
-        /* Close connection after entire reply has been sent. */
+        /* 数据全部返回，则关闭client和连接 */
         if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
             freeClientAsync(c);
             return C_ERR;
@@ -1668,13 +1666,14 @@ void sendReplyToClient(connection *conn) {
     writeToClient(c,1);
 }
 
-/* This function is called just before entering the event loop, in the hope
- * we can just write the replies to the client output buffer without any
- * need to use a syscall in order to install the writable event handler,
- * get it called, and so forth. */
+
+/* 此函数在进入事件循环之前被调用，
+ * 直接将返回值写入客户端输出缓冲区，
+ * 不需要进行系统调用，也不需要注册写事件处理器*/
 int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
+    // 获取系统延迟写队列的长度
     int processed = listLength(server.clients_pending_write);
 
     listRewind(server.clients_pending_write,&li);
@@ -1683,25 +1682,21 @@ int handleClientsWithPendingWrites(void) {
         c->flags &= ~CLIENT_PENDING_WRITE;
         listDelNode(server.clients_pending_write,ln);
 
-        /* If a client is protected, don't do anything,
-         * that may trigger write error or recreate handler. */
+        /* 如果客户端受保护，则不要执行任何操作，可能会触发写入错误或重新创建处理程序。*/
         if (c->flags & CLIENT_PROTECTED) continue;
 
-        /* Don't write to clients that are going to be closed anyway. */
+        /* 将要关闭的客户端不需要写入。*/
         if (c->flags & CLIENT_CLOSE_ASAP) continue;
 
-        /* Try to write buffers to the client socket. */
+        /* 将缓冲值写入客户端套接字。如果写完，则跳过之后的操作。*/
         if (writeToClient(c,0) == C_ERR) continue;
 
-        /* If after the synchronous writes above we still have data to
-         * output to the client, we need to install the writable handler. */
+        /* 如果在上面的同步写入之后，我们仍然有数据未写入，只能注册写事件处理器。*/
         if (clientHasPendingReplies(c)) {
             int ae_barrier = 0;
-            /* For the fsync=always policy, we want that a given FD is never
-             * served for reading and writing in the same event loop iteration,
-             * so that in the middle of receiving the query, and serving it
-             * to the client, we'll call beforeSleep() that will do the
-             * actual fsync of AOF to disk. the write barrier ensures that. */
+            /* 对于 fsync=always 策略，我们希望给定的 FD 永远不会用于在同一事件循环迭代中读取和写入，
+             * 以便在接收查询的过程中，我们会调用 beforeSleep（）实际同步AOF 到磁盘，并送达它到客户端。
+             * 写入屏障确保了这一点。*/
             if (server.aof_state == AOF_ON &&
                 server.aof_fsync == AOF_FSYNC_ALWAYS)
             {
@@ -2164,7 +2159,7 @@ void processInputBuffer(client *c) {
         /**
          * 从缓存区解析命令
          */
-        if (c->reqtype == PROTO_REQ_INLINE) {
+         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) break;
             /* 如果 Gopher 模式且我们得到零个或一个参数，则处理Gopher 模式下的请求。
              * 为了避免数据竞争，如果启用 io 线程读取查询，则Redis不会支持 Gopher 。*/
